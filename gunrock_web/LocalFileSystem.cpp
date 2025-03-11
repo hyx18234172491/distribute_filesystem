@@ -128,24 +128,42 @@ int LocalFileSystem::lookup(int parentInodeNumber, string name) {
 
 // 找一个空的inode
 
+int getOffsetOfBitmapByInodeNumber(int inodeNumber){
+  return inodeNumber % (UFS_BLOCK_SIZE * 8);
+}
+int getBitmapBlockIndexByInodeNumber(int inodeNumber){
+  return inodeNumber / (UFS_BLOCK_SIZE * 8);
+}
+int getInodeBlockIndexByInodeNumber(int inodeNumber){
+  return inodeNumber / (UFS_BLOCK_SIZE / sizeof(inode_t));
+}
+int getInodeBlockOffsetByInodeNumber(int inodeNumber){
+  return inodeNumber % (UFS_BLOCK_SIZE / sizeof(inode_t));
+}
+
 int LocalFileSystem::stat(int inodeNumber, inode_t *inode) {
+  union {
+		inode_t inodeBuf[UFS_BLOCK_SIZE / sizeof(inode_t)];
+		unsigned char byteBuf[UFS_BLOCK_SIZE];
+	};
   super_t super;
   this->readSuperBlock(&super);
-  // TODO:读inode是否有效，和bitmap有关系吗？
-  unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
-  this->readInodeBitmap(&super,inode_bit_map);
-  
+  // 首先检查编号
   if(checkInodeIsValid(&super,inodeNumber)==EINVALIDINODE){
     return EINVALIDINODE;
   }
-  if(checkInodeIsExist(&super,inodeNumber,inode_bit_map)==0){
-    return EINVALIDINODE;
-  }
-  // 首先读到inode表
-  inode_t inodes[super.num_inodes]; // inodes table
-  this->readInodeRegion(&super,inodes); // inodes table
-  // 从inodes表中找到
-  *inode = inodes[inodeNumber];
+  // 查看bitmap
+  int bitmapBlockIndex = getBitmapBlockIndexByInodeNumber(inodeNumber);
+  disk->readBlock(super.inode_bitmap_addr + bitmapBlockIndex, byteBuf);
+  int offsetOfBitmap = getOffsetOfBitmapByInodeNumber(inodeNumber);
+
+  // TODO:这块是否正确
+  if (0 == (byteBuf[(offsetOfBitmap / 8)] & (1 << (offsetOfBitmap & 7)))) {
+		return -EINVALIDINODE;
+	}
+  // 读取inode
+  disk->readBlock(super.inode_region_addr + getInodeBlockIndexByInodeNumber(inodeNumber), inodeBuf);
+  memcpy(inode, &inodeBuf[getInodeBlockOffsetByInodeNumber(inodeNumber)], sizeof(inode_t));
   return 0;
 }
 
@@ -173,7 +191,7 @@ int LocalFileSystem::read(int inodeNumber, void *buffer, int size) {
     unsigned int data_block_index = inode.direct[i];
     if (data_block_index == 0) continue;
     // 一个block可以放多少entries
-    if(checkInodeIsValid(&super,data_block_index,inode_bit_map)==EINVALIDINODE){
+    if(checkInodeIsValid(&super,data_block_index)==EINVALIDINODE){
         continue;
     }
     // 有效

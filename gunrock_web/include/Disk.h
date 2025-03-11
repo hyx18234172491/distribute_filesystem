@@ -19,6 +19,10 @@ class Disk {
   void beginTransaction();  // 开始事务
   void commit();  // 提交事务
   void rollback();  // 回滚事务
+
+  // 一个事务里边的所有程序代码，要么全部执行成功，要么全部不执行
+  // 如果成功，就commit
+  // 如果不成功，就执行回滚
   
  private:
   std::string imageFile;
