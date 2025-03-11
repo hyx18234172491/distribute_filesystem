@@ -61,7 +61,7 @@ void LocalFileSystem::writeInodeRegion(super_t *super, inode_t *inodes) {
 
 
 
-bool checkInodeIsValid(super_t *super,int parentInodeNumber,unsigned char * inode_bit_map){
+bool checkInodeIsValid(super_t *super,int parentInodeNumber){
   // 判断父节点inode是否有效
   if(parentInodeNumber>=super->num_inodes){
     return EINVALIDINODE;
@@ -88,7 +88,7 @@ int LocalFileSystem::lookup(int parentInodeNumber, string name) {
   // 读bitmap看看是否有效
   unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
   this->readInodeBitmap(&super,inode_bit_map);
-  if(checkInodeIsValid(&super,parentInodeNumber,inode_bit_map)==EINVALIDINODE){
+  if(checkInodeIsValid(&super,parentInodeNumber)==EINVALIDINODE){
     return EINVALIDINODE;
   }
   
@@ -135,7 +135,10 @@ int LocalFileSystem::stat(int inodeNumber, inode_t *inode) {
   unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
   this->readInodeBitmap(&super,inode_bit_map);
   
-  if(checkInodeIsValid(&super,inodeNumber,inode_bit_map)==EINVALIDINODE){
+  if(checkInodeIsValid(&super,inodeNumber)==EINVALIDINODE){
+    return EINVALIDINODE;
+  }
+  if(checkInodeIsExist(&super,inodeNumber,inode_bit_map)==0){
     return EINVALIDINODE;
   }
   // 首先读到inode表
@@ -196,52 +199,136 @@ int LocalFileSystem::create(int parentInodeNumber, int type, string name) {
   super_t super;
   this->readSuperBlock(&super);
   
-  // 读bitmap看看是否有效
-  unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
-  this->readInodeBitmap(&super,inode_bit_map);
-  if(checkInodeIsValid(&super,parentInodeNumber,inode_bit_map)==EINVALIDINODE){
+  inode_t parent_inode;
+  if(this->stat(parentInodeNumber,&parent_inode)==EINVALIDINODE){
     return EINVALIDINODE;
   }
-  if(checkInodeIsExist(&super,parentInodeNumber,inode_bit_map)==0){
-    return EINVALIDINODE;
+  if(name.size()>=DIR_ENT_NAME_SIZE){
+    return EINVALIDNAME;
   }
-  // Inode有效
-  // 3. 找到inode的table，然后找到parentInodeNumber对应的inode
-  inode_t inodes[super.num_inodes]; // inodes table
 
-  // TODO:
-  if(inodes[parentInodeNumber].type==UFS_DIRECTORY){
-    // 通过direct[i]找到对应的数据域
-    for (int i = 0; i < DIRECT_PTRS; i++) // 遍历30个节点，
+  if(parent_inode.type==UFS_DIRECTORY){
+    int entries_num = UFS_BLOCK_SIZE / sizeof(dir_ent_t);
+    // 遍历找是否存在
+    dir_ent_t entrieList[entries_num];
+    for (int i = 0; i < DIRECT_PTRS; i++)
     {
-      unsigned int data_block_index = inodes[parentInodeNumber].direct[i];
+      unsigned int data_block_index = parent_inode.direct[i];
       if (data_block_index == 0) continue;
-      // 一个block可以放多少entries
-      if(checkInodeIsValid(&super,data_block_index,inode_bit_map)==EINVALIDINODE){
+      if(checkInodeIsValid(&super,data_block_index)==EINVALIDINODE){
           continue;
       }
-      dir_ent_t entrieList[entries_num];
       disk->readBlock(data_block_index, entrieList);
       // 读出了整个entrieList，
       for(int j = 0; j<entries_num;j++){
         if(strcmp(entrieList[i].name,name.c_str())==0){
+          // 判断类型
+          inode_t entrie_inode;
+          this->stat(entrieList[i].inum,&entrie_inode);
+          if(entrie_inode.type==type){
+            return entrieList[i].inum;
+          }else{
+            return EINVALIDTYPE;
+          }
+        }
+      }
+    }
+
+
+    unsigned char data_bit_map[super.data_bitmap_len * UFS_BLOCK_SIZE];
+    this->readDataBitmap(&super,data_bit_map);
+
+    // 遍历，从现在direct[i]已经有指向的，找空闲的entirList，然后放进去
+    for (int i = 0; i < DIRECT_PTRS; i++)
+    {
+      unsigned int data_block_index = parent_inode.direct[i];
+      if (data_block_index == 0) continue;
+      if(checkInodeIsValid(&super,data_block_index)==EINVALIDINODE){
+          continue;
+      }
+
+      dir_ent_t entrieList[entries_num];
+      this->disk->readBlock(data_block_index, entrieList);
+      // 读出了整个entrieList，
+      for(int j = 0; j<entries_num;j++){
+        if(entrieList[i].name[0]=='\0'){
+          // 加进去就可以了
+          strcpy(entrieList[i].name,name.c_str());
+          // 创建一个新的inode了
+          // 需要遍历bitmap找一个空的
+          unsigned char inodeBitmap[super.inode_bitmap_len * UFS_BLOCK_SIZE]; // 栈，vector（堆）
+          readInodeBitmap(&super,inodeBitmap);
+          int new_inode_index = getAndSetFreeInodeNumIndex(&super,inodeBitmap);
+          entrieList[i].inum = new_inode_index;
+          if(entrieList[i].inum==-1){
+            return ENOTENOUGHSPACE;
+          }
+          
+          inode_t inodes[super.num_inodes]; // inodes table
+          this->readInodeRegion(&super,inodes); // inodes table
+          inode_t &new_inode = inodes[entrieList[i].inum];
+          new_inode.type = type;
+          for (int k = 0; k < DIRECT_PTRS; k++)
+          {
+            new_inode.direct[k] = 0;
+          }
+          
+          if(type==UFS_DIRECTORY){
+            // 找数据域，并且写两个entrie
+            int free_data_block_index = getAndSetFreeDataBlockIndex(&super,data_bit_map);
+            dir_ent_t new_dir_entrieList[entries_num];
+            strcpy(new_dir_entrieList[0].name,".");
+            new_dir_entrieList[0].inum = new_inode_index;
+            strcpy(new_dir_entrieList[1].name,"..");
+            new_dir_entrieList[1].inum = parentInodeNumber;
+
+            for (int k = 2; k < DIRECT_PTRS; k++)
+            {
+              new_dir_entrieList[i].name[0]='\0';
+              new_dir_entrieList[i].inum = -1;
+            }
+            this->disk->writeBlock(free_data_block_index,new_dir_entrieList);
+            this->writeDataBitmap(&super,data_bit_map);
+          }
+
+          // update InodeBitmap, InodeRegion
+          this->writeInodeBitmap(&super,inodeBitmap);
+          this->writeInodeRegion(&super,inodes);
+          this->disk->writeBlock(data_block_index, entrieList);
           return entrieList[i].inum;
         }
       }
     }
+
+    // 需要找一个direct[i]没有指向的，也就是direct[i]为0的，然后分配data区域，然后放新的entrylist
+    
+
   }else{
-    return EINVALIDINODE;
+    return EINVALIDTYPE;
   }
 
   return 0;
 }
 
+int getAndSetFreeInodeNumIndex(super_t *super, unsigned char *inodeBitMap){
+  for(int i=0;i<super->inode_bitmap_len * UFS_BLOCK_SIZE;i++){
+    // 遍历每一个找到inode节点
+    for(int j=0;j<8;j++){
+      if(((inodeBitMap[i]>>(j))&1)==0){
+        inodeBitMap[i] |= (1<<j);
+        return i*8 + j;
+      }
+    }
+  }
+  return -1;
+}
 
-int getFreeDataBlockIndex(super_t *super, unsigned char *data_bit_map){
+int getAndSetFreeDataBlockIndex(super_t *super, unsigned char *data_bit_map){
   for(int i=0;i<super->data_bitmap_len * UFS_BLOCK_SIZE;i++){
     // 遍历每一个找到空闲块
     for(int j=0;j<8;j++){
       if(((data_bit_map[i]>>(j))&1)==0){
+        data_bit_map[i] |= (1<<j);
         return i*8 + j;
       }
     }
@@ -250,7 +337,7 @@ int getFreeDataBlockIndex(super_t *super, unsigned char *data_bit_map){
 }
 
 int LocalFileSystem::write(int inodeNumber, const void *buffer, int size) {
-  if(size>=MAX_FILE_SIZE || size ==0){
+  if(size>=MAX_FILE_SIZE || size == 0){
     return EINVALIDSIZE;
   }
   super_t super;
@@ -259,7 +346,10 @@ int LocalFileSystem::write(int inodeNumber, const void *buffer, int size) {
   // 读bitmap看看是否有效
   unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
   this->readInodeBitmap(&super,inode_bit_map);
-  if(checkInodeIsValid(&super,inodeNumber,inode_bit_map)==EINVALIDINODE){
+  if(checkInodeIsValid(&super,inodeNumber)==EINVALIDINODE){
+    return EINVALIDINODE;
+  }
+  if(checkInodeIsExist(&super,inodeNumber,inode_bit_map)==0){
     return EINVALIDINODE;
   }
   // 读inodes表，读到inode
@@ -267,11 +357,10 @@ int LocalFileSystem::write(int inodeNumber, const void *buffer, int size) {
   this->readInodeRegion(&super,inodes);
   inode_t inode = inodes[inodeNumber];
 
-  if((checkInodeIsExist(&super,inodeNumber,inode_bit_map))==1){ // 等于1表示inode存在
-    if(inode.type==UFS_DIRECTORY){
+  if(inode.type==UFS_DIRECTORY){
       return EINVALIDTYPE;
-    }
   }
+
   // 从中找出一个空闲块
   int block_num = size / UFS_BLOCK_SIZE;
   if( size % UFS_BLOCK_SIZE != 0){
@@ -287,26 +376,31 @@ int LocalFileSystem::write(int inodeNumber, const void *buffer, int size) {
   unsigned char data_bit_map[super.data_bitmap_len * UFS_BLOCK_SIZE];
   this->readDataBitmap(&super,data_bit_map);
   // 走到下面一定可以放得下
-  this->disk->beginTransaction();
-  for(int i=0;i < block_num; i++){
+  int i;
+  for(i = 0; i < block_num; i++){
     if(inode.direct[i] != 0){ // override,because databitMap is 1, not to update,directly override
       this->disk->writeBlock(super.data_region_addr + inode.direct[i],(char *)buffer + i * UFS_BLOCK_SIZE);
     }else{
-      int free_data_block_index = getFreeDataBlockIndex(&super,data_bit_map);
+      int free_data_block_index = getAndSetFreeDataBlockIndex(&super,data_bit_map);
       if(free_data_block_index!=-1){
-        // set data bit map
-        int ii = free_data_block_index / 8;
-        int jj = free_data_block_index % 8;
-        data_bit_map[ii] = data_bit_map[ii] | 1 << jj; // 100
         this->disk->writeBlock(super.data_region_addr + free_data_block_index,(char *)buffer + i * UFS_BLOCK_SIZE);
       }else{
-        this->disk->rollback();
-        return EINVALIDSIZE;
+        break;
       }
     }
   }
+  // 将i后边的所有的都释放掉
+  for(; i<DIRECT_PTRS; i++){
+    if(inode.direct[i] != 0){
+      // 释放
+      int byte_index = inode.direct[i] / 8;
+      int bit_index = inode.direct[i] % 8;
+      data_bit_map[byte_index]  = data_bit_map[byte_index] & ~(1<<bit_index);
+    }
+  }
+  
   this->writeDataBitmap(&super,data_bit_map); // write complete,writeBitmap
-  this->disk->commit();
+  return min(size,i * UFS_BLOCK_SIZE);
 }
 
 int LocalFileSystem::unlink(int parentInodeNumber, string name) {
@@ -322,7 +416,7 @@ int LocalFileSystem::unlink(int parentInodeNumber, string name) {
   // 读bitmap看看是否有效
   unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
   this->readInodeBitmap(&super,inode_bit_map);
-  if(checkInodeIsValid(&super,parentInodeNumber,inode_bit_map)==EINVALIDINODE){
+  if(checkInodeIsValid(&super,parentInodeNumber)==EINVALIDINODE){
     return EINVALIDINODE;
   }
   if(checkInodeIsExist(&super,parentInodeNumber,inode_bit_map)==0){
@@ -342,7 +436,7 @@ int LocalFileSystem::unlink(int parentInodeNumber, string name) {
       unsigned int data_block_index = inodes[parentInodeNumber].direct[i];
       if (data_block_index == 0) continue;
 
-      if(checkInodeIsValid(&super,data_block_index,inode_bit_map)==EINVALIDINODE){
+      if(checkInodeIsValid(&super,data_block_index)==EINVALIDINODE){
           continue;
       }
       if(checkInodeIsExist(&super,data_block_index,inode_bit_map)==0){
