@@ -15,8 +15,14 @@ LocalFileSystem::LocalFileSystem(Disk *disk) {
 }
 
 void LocalFileSystem::readSuperBlock(super_t *super) {
-  // 读超级block
-  this->disk->readBlock(0,super);
+  if (super == nullptr) {
+        cerr << "Invalid argument for reading super block." << endl;
+        return;
+    }
+
+	unsigned char byteBuf[UFS_BLOCK_SIZE];
+  disk->readBlock(0, byteBuf);
+	memcpy(super, byteBuf, sizeof(super_t));
 }
 
 void LocalFileSystem::readInodeBitmap(super_t *super, unsigned char *inodeBitmap) {
@@ -82,37 +88,26 @@ bool checkInodeIsExist(super_t *super,int parentInodeNumber,unsigned char * inod
 
 
 int LocalFileSystem::lookup(int parentInodeNumber, string name) {
-  super_t super;
-  this->readSuperBlock(&super);
 
-  // 读bitmap看看是否有效
-  unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
-  this->readInodeBitmap(&super,inode_bit_map);
-  if(checkInodeIsValid(&super,parentInodeNumber)==EINVALIDINODE){
-    return EINVALIDINODE;
+  inode_t inode;
+  if (stat(parentInodeNumber, &inode)) {
+        return -EINVALIDINODE;
   }
-  
-  // 3. 找到inode的table，然后找到parentInodeNumber对应的inode
-  inode_t inodes[super.num_inodes]; // inodes table
-  this->readInodeRegion(&super,inodes);
-  
   int entries_num = UFS_BLOCK_SIZE / sizeof(dir_ent_t);
   // 找这个里面的内容就可用了inodes[parentInodeNumber]
-  if(inodes[parentInodeNumber].type==UFS_DIRECTORY){
+  if(inode.type==UFS_DIRECTORY){
     // 通过direct[i]找到对应的数据域
     for (int i = 0; i < DIRECT_PTRS; i++)
     {
-      unsigned int data_block_index = inodes[parentInodeNumber].direct[i];
-      if (data_block_index == 0) continue;
-      // 一个block可以放多少entries
-      if(checkInodeIsValid(&super,data_block_index,inode_bit_map)==EINVALIDINODE){
-          continue;
+      unsigned int data_block_index = inode.direct[i];
+      if (data_block_index == 0) {
+        continue;
       }
       dir_ent_t entrieList[entries_num];
       disk->readBlock(data_block_index, entrieList);
       // 读出了整个entrieList，
       for(int j = 0; j<entries_num;j++){
-        if(strcmp(entrieList[i].name,name.c_str())==0){
+        if(entrieList[i].inum!=-1 && (entrieList[i].name,name.c_str())==0){
           return entrieList[i].inum;
         }
       }
@@ -122,11 +117,6 @@ int LocalFileSystem::lookup(int parentInodeNumber, string name) {
   }
   return 0;
 }
-
-// 什么情况下会去调用stat这个函数，
-// stat函数的作用，就是根据inodeNumber找到一个inode
-
-// 找一个空的inode
 
 int getOffsetOfBitmapByInodeNumber(int inodeNumber){
   return inodeNumber % (UFS_BLOCK_SIZE * 8);
@@ -168,38 +158,33 @@ int LocalFileSystem::stat(int inodeNumber, inode_t *inode) {
 }
 
 int LocalFileSystem::read(int inodeNumber, void *buffer, int size) {
-  super_t super;
-  this->readSuperBlock(&super);
-
-  // 读inode是否有效
-  unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
-  this->readInodeBitmap(&super,inode_bit_map);
-
+  if (!buffer || (size <= 0)) {
+		return EINVALIDSIZE;
+	}
   inode_t inode;
   if(this->stat(inodeNumber,&inode)==EINVALIDINODE){
     return EINVALIDINODE;
   }
-
   // 读数据，我们只能读一个block
   // 先把数据读到block，再从block（4K）里边复制到buffer（2K)
   size = min(size,inode.size);
+
   int remaining  = size;
   int bytesRead  = 0;
   char temp_buffer[UFS_BLOCK_SIZE];
   for (int i = 0; i < DIRECT_PTRS; i++) // 遍历inode指向的所有块
   {
     unsigned int data_block_index = inode.direct[i];
-    if (data_block_index == 0) continue;
-    // 一个block可以放多少entries
-    if(checkInodeIsValid(&super,data_block_index)==EINVALIDINODE){
-        continue;
-    }
-    // 有效
-    this->disk->readBlock(super.data_region_addr+data_block_index,temp_buffer);
 
-    if(left-UFS_BLOCK_SIZE>=0){
+    if (data_block_index == 0){
+      continue;
+    }
+
+    this->disk->readBlock(data_block_index,temp_buffer);
+
+    if(remaining-UFS_BLOCK_SIZE>=0){
       memcpy(buffer + bytesRead,temp_buffer,UFS_BLOCK_SIZE);
-      bytesRead+=UFS_BLOCK_SIZE;
+      bytesRead += UFS_BLOCK_SIZE;
     }else{
       memcpy(buffer + bytesRead,temp_buffer,remaining);
       bytesRead+=remaining ;
