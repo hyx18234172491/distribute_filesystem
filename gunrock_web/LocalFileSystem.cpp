@@ -383,75 +383,58 @@ int LocalFileSystem::write(int inodeNumber, const void *buffer, int size) {
 
 int LocalFileSystem::unlink(int parentInodeNumber, string name) {
   if(name=="."||name==".."){
-    return EUNLINKNOTALLOWED;
+    return -EUNLINKNOTALLOWED;
   }
   if(name==""){
-    return EINVALIDNAME;
+    return -EINVALIDNAME;
   }
-  super_t super;
-  this->readSuperBlock(&super);
-
-  // 读bitmap看看是否有效
-  unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
-  this->readInodeBitmap(&super,inode_bit_map);
-  if(checkInodeIsValid(&super,parentInodeNumber)==EINVALIDINODE){
-    return EINVALIDINODE;
+  inode_t inode;
+  if (stat(parentInodeNumber, &inode)) {
+      return -EINVALIDINODE;
   }
-  if(checkInodeIsExist(&super,parentInodeNumber,inode_bit_map)==0){
-    return EINVALIDINODE;
-  }
-
-  // 找到inode的信息
-  inode_t inodes[super.num_inodes]; // inodes table
-  this->readInodeRegion(&super,inodes);
 
   int entries_num = UFS_BLOCK_SIZE / sizeof(dir_ent_t);
-  // 找这个里面的内容就可用了inodes[parentInodeNumber]
-  if(inodes[parentInodeNumber].type==UFS_DIRECTORY){
-    // 通过direct[i]找到对应的数据域
-    for (int i = 0; i < DIRECT_PTRS; i++)
-    {
-      unsigned int data_block_index = inodes[parentInodeNumber].direct[i];
-      if (data_block_index == 0) continue;
+  if ((UFS_DIRECTORY != inode.type) || (inode.size < (int)(sizeof(dir_ent_t) * 2))) { // 至少两个目录项
+		return -EINVALIDINODE;
+	}
 
-      if(checkInodeIsValid(&super,data_block_index)==EINVALIDINODE){
-          continue;
-      }
-      if(checkInodeIsExist(&super,data_block_index,inode_bit_map)==0){
-        continue;
-      }
-      dir_ent_t entrieList[entries_num];
-      disk->readBlock(data_block_index, entrieList);
-      // 读出了整个entrieList，
-      for(int j = 0; j < entries_num; j++){
-        if(strcmp(entrieList[i].name,name.c_str())==0){
-          // 这里名字相等了，需要unlink
-          // 是不是需要判断，这个name对应的文件是否是目录，如果是目录，需要判断是否非空
-          inode_t name_inode;
-          this->stat(entrieList[i].inum,&name_inode); // TODO:如果无效就unlink
+  // 通过direct[i]找到对应的数据域
+  for (int i = 0; i < DIRECT_PTRS; i++)
+  {
+    unsigned int data_block_index = inode.direct[i];
+    if (data_block_index == 0) continue;
+    if(checkInodeIsExist(&super,data_block_index,inode_bit_map)==0){
+      continue;
+    }
+    dir_ent_t entrieList[entries_num];
+    disk->readBlock(data_block_index, entrieList);
+    // 读出了整个entrieList，
+    for(int j = 0; j < entries_num; j++){
+      if(strcmp(entrieList[i].name,name.c_str())==0){
+        // 这里名字相等了，需要unlink
+        // 是不是需要判断，这个name对应的文件是否是目录，如果是目录，需要判断是否非空
+        inode_t name_inode;
+        this->stat(entrieList[i].inum,&name_inode); // TODO:如果无效就unlink
 
-          // TODO:unlink是否需要更新bitmap
-          if(name_inode.type==UFS_REGULAR_FILE){
-            // 如何从entrieList中删除
-            entrieList[i].inum=-1;
-            entrieList[i].name[0]='\0';
-            disk->writeBlock(data_block_index, entrieList);
+        // TODO:unlink是否需要更新bitmap
+        if(name_inode.type==UFS_REGULAR_FILE){
+          // 如何从entrieList中删除
+          entrieList[i].inum=-1;
+          entrieList[i].name[0]='\0';
+          disk->writeBlock(data_block_index, entrieList);
+        }else{
+          // 目录
+          // 还需要判断目录是否为空
+          if(name_inode.size>0){
+            return EDIRNOTEMPTY;
           }else{
-            // 目录
-            // 还需要判断目录是否为空
-            if(name_inode.size>0){
-              return EDIRNOTEMPTY;
-            }else{
-                entrieList[i].inum=-1;
-                entrieList[i].name[0]='\0';
-                disk->writeBlock(data_block_index, entrieList);
-            }
+              entrieList[i].inum=-1;
+              entrieList[i].name[0]='\0';
+              disk->writeBlock(data_block_index, entrieList);
           }
         }
       }
     }
-  }else{
-    return EINVALIDINODE;
   }
   return 0;
 }
