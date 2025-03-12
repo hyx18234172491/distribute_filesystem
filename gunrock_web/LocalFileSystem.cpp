@@ -237,7 +237,7 @@ int LocalFileSystem::create(int parentInodeNumber, int type, string name) {
   this->readDataBitmap(&super,data_bit_map);
 
   // 遍历，从现在direct[i]已经有指向的，找空闲的entirList，然后放进去
-  
+
   int entries_num = UFS_BLOCK_SIZE / sizeof(dir_ent_t);
   for (int i = 0; i < DIRECT_PTRS; i++)
   {
@@ -329,41 +329,27 @@ int getAndSetFreeDataBlockIndex(super_t *super, unsigned char *data_bit_map){
 }
 
 int LocalFileSystem::write(int inodeNumber, const void *buffer, int size) {
-  if(size>=MAX_FILE_SIZE || size == 0){
-    return EINVALIDSIZE;
+  if(size>=MAX_FILE_SIZE || size == 0 || buffer == nullptr){
+    return -EINVALIDSIZE;
   }
-  super_t super;
-  this->readSuperBlock(&super);
-  
-  // 读bitmap看看是否有效
-  unsigned char inode_bit_map[super.inode_bitmap_len * UFS_BLOCK_SIZE];
-  this->readInodeBitmap(&super,inode_bit_map);
-  if(checkInodeIsValid(&super,inodeNumber)==EINVALIDINODE){
-    return EINVALIDINODE;
+  int block_num = size / UFS_BLOCK_SIZE;  // 需要的块数量
+  if( size % UFS_BLOCK_SIZE != 0){
+    block_num++;
   }
-  if(checkInodeIsExist(&super,inodeNumber,inode_bit_map)==0){
-    return EINVALIDINODE;
+  if(block_num>=DIRECT_PTRS){
+    return -ENOTENOUGHSPACE;
   }
-  // 读inodes表，读到inode
-  inode_t inodes[super.num_inodes]; // inodes table
-  this->readInodeRegion(&super,inodes);
-  inode_t inode = inodes[inodeNumber];
+  inode_t inode;
+  if (stat(inodeNumber, &inode)) {
+      return -EINVALIDINODE;
+  }
 
   if(inode.type==UFS_DIRECTORY){
       return EINVALIDTYPE;
   }
 
-  // 从中找出一个空闲块
-  int block_num = size / UFS_BLOCK_SIZE;
-  if( size % UFS_BLOCK_SIZE != 0){
-    block_num++;
-  }
-  // TODO:还需要写超过一个块的
-  // 计算需要写几个块
-  // 
-  if(block_num>=DIRECT_PTRS){
-    return EINVALIDSIZE;
-  }
+  super_t super;
+  this->readSuperBlock(&super);
   // 通过data_regin的bitmap看看有哪些空闲块，然后放进去
   unsigned char data_bit_map[super.data_bitmap_len * UFS_BLOCK_SIZE];
   this->readDataBitmap(&super,data_bit_map);
