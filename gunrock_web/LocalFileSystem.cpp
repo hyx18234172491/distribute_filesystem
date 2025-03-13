@@ -87,36 +87,33 @@ bool checkInodeIsExist(super_t *super,int parentInodeNumber,unsigned char * inod
 }
 
 
-int LocalFileSystem::lookup(int parentInodeNumber, string name) {
-
-  inode_t inode;
-  if (stat(parentInodeNumber, &inode)) {
+int LocalFileSystem::lookup(int parentInodeNumber, std::string name) {
+    inode_t pinum;
+    if (stat(parentInodeNumber, &pinum)) {
         return -EINVALIDINODE;
-  }
-  int entries_num = UFS_BLOCK_SIZE / sizeof(dir_ent_t);
-  // 找这个里面的内容就可用了inodes[parentInodeNumber]
-  if(inode.type==UFS_DIRECTORY){
-    for (int i = 0; i < DIRECT_PTRS; i++) // 30个指针
-    {
-      unsigned int data_block_index = inode.direct[i];
-      if (data_block_index == 0) {
-        continue;
-      }
-      dir_ent_t entrieList[entries_num];
-      disk->readBlock(data_block_index, entrieList);
-      // 读出了整个entrieList，
-      for(int j = 0; j < entries_num;j++){
-        if(entrieList[i].inum!=-1){
-          if(strcmp(entrieList[i].name,name.c_str())==0 && entrieList[i].inum!=-1){
-            return entrieList[i].inum;
-          }
-        }
-      }
     }
-  }else{
-    return -EINVALIDINODE;
-  }
-  return -ENOTFOUND;
+
+	if (pinum.type != UFS_DIRECTORY) {
+		return -EINVALIDINODE;
+	}
+
+    int num_blks2 = (pinum.size + UFS_BLOCK_SIZE - 1) / UFS_BLOCK_SIZE;
+    dir_ent_t entry;
+	unsigned char byteBuf2[UFS_BLOCK_SIZE];
+
+    for (int i = 0; i < num_blks2; ++i) {
+        disk->readBlock(pinum.direct[i], byteBuf2);
+        for (int off = 0; 
+			off < UFS_BLOCK_SIZE; 
+			off += sizeof(dir_ent_t)) {
+            memcpy(&entry, byteBuf2 + off, sizeof(dir_ent_t));
+            if (entry.inum != -1 && !strcmp(entry.name, name.c_str())) {
+                return entry.inum;
+            }
+        }
+    }
+
+    return -ENOTFOUND;
 }
 
 int getOffsetOfBitmapByInodeNumber(int inodeNumber){
@@ -199,48 +196,45 @@ int LocalFileSystem::read(int inodeNumber, void *buffer, int size) {
   return bytesRead;
 }
 
-// 创建一个test.txt
-// 1. 创建一个inode，存文件名称，文件类型，调用的是create函数，创建元数据
-// 2. 通过这个inode编号，找到inode，往inode指向的区域写数据，调用的是write函数
-
-int LocalFileSystem::create(int parentInodeNumber, int type, string name) { 
-  union {
+int LocalFileSystem::create(int parentInodeNumber, int type, std::string name) {
+	union {
 		unsigned char byteBuf[UFS_BLOCK_SIZE];
 		inode_t inodeBuf[(UFS_BLOCK_SIZE / sizeof(inode_t))];
 		dir_ent_t entryBuf[(UFS_BLOCK_SIZE / sizeof(dir_ent_t))];
 	};
-  if(name.empty() || name.size()>=DIR_ENT_NAME_SIZE){
-    return -EINVALIDNAME;
-  }
-  if (!name.compare(".") || !name.compare("..")) {
+
+    if (name.empty() || (name.length() >= DIR_ENT_NAME_SIZE)) {
+        return -EINVALIDNAME;
+    }
+
+	if (!name.compare(".") || !name.compare("..")) {
 		return -EINVALIDNAME;
 	}
-  inode_t parent_inode;
-  if(this->stat(parentInodeNumber,&parent_inode)==EINVALIDINODE){
-    return -EINVALIDINODE;
-  }
 
-  if (parent_inode.type != UFS_DIRECTORY) {
+    inode_t pinum;
+    if (stat(parentInodeNumber, &pinum)) {
+        return -EINVALIDINODE;
+    }
+
+	if (pinum.type != UFS_DIRECTORY) {
 		return -EINVALIDINODE;
 	}
 
-  // 首先查找有没有
-  int inode_index = lookup(parentInodeNumber, name);
-  if(inode_index>=0){
-    inode_t inode;
-    if (stat(inode_index, &inode)!=0){
-      return -EINVALIDINODE;
+	int inum2 = lookup(parentInodeNumber, name);
+    if (inum2 >= 0) {
+		inode_t inode2;
+		if (stat(inum2, &inode2))
+			return -EINVALIDINODE;
+		if (inode2.type != type)
+			return -EINVALIDTYPE;
+		return inum2;
     }
-    if (inode.type != type){
-      return -EINVALIDTYPE;
-    }
-		return inode_index;
-  }else if(-ENOTFOUND != inode_index){
-    return inode_index;
-  }
-  
-  super_t super;
-  readSuperBlock(&super);
+	else if (-ENOTFOUND != inum2) {
+		return inum2;
+	}
+
+    super_t super;
+    readSuperBlock(&super);
 
 	disk->beginTransaction();
 
@@ -319,25 +313,25 @@ int LocalFileSystem::create(int parentInodeNumber, int type, string name) {
 		disk->writeBlock((super.data_region_addr + indexOfData), byteBuf);
 	}
 
-	int cntOfBlock = (parent_inode.size + (UFS_BLOCK_SIZE - 1)) / UFS_BLOCK_SIZE;
+	int cntOfBlock = (pinum.size + (UFS_BLOCK_SIZE - 1)) / UFS_BLOCK_SIZE;
 	int indexOfEntry = 0;
 	bQuit = 0;
 
 	for (int i = 0; 
 		(!bQuit && (i < cntOfBlock)); 
 		i++) {
-		disk->readBlock((parent_inode.direct[i]), byteBuf);
+		disk->readBlock((pinum.direct[i]), byteBuf);
 		for (int j = 0; 
 			(j < (int)(sizeof(entryBuf)/sizeof(dir_ent_t))); 
 			j++, indexOfEntry++) {
-			if (parent_inode.size <= (int)(sizeof(dir_ent_t) * indexOfEntry)) {
+			if (pinum.size <= (int)(sizeof(dir_ent_t) * indexOfEntry)) {
 				entryBuf[j].inum = -1;
 			}
 			if (-1 == entryBuf[j].inum) {
 				bQuit = 1;
 				strcpy(entryBuf[j].name, name.c_str());
 				entryBuf[j].inum = inumNew;
-				disk->writeBlock((parent_inode.direct[i]), byteBuf);
+				disk->writeBlock((pinum.direct[i]), byteBuf);
 				break;
 			}
 		}
@@ -385,20 +379,20 @@ int LocalFileSystem::create(int parentInodeNumber, int type, string name) {
 			entryBuf[i].inum = -1;
 		}
 		disk->writeBlock((super.data_region_addr + indexDataNew), byteBuf);
-		parent_inode.size = (1 + indexOfEntry) * sizeof(dir_ent_t);
+		pinum.size = (1 + indexOfEntry) * sizeof(dir_ent_t);
 		int indexOfBlock = (parentInodeNumber / (UFS_BLOCK_SIZE / sizeof(inode_t)));
 		int offsetOfBlock = (parentInodeNumber % (UFS_BLOCK_SIZE / sizeof(inode_t)));
 		disk->readBlock((super.inode_region_addr + indexOfBlock), byteBuf);
-		inodeBuf[offsetOfBlock].size = parent_inode.size;
+		inodeBuf[offsetOfBlock].size = pinum.size;
 		inodeBuf[offsetOfBlock].direct[cntOfBlock++] = (super.data_region_addr + indexDataNew);
 		disk->writeBlock((super.inode_region_addr + indexOfBlock), byteBuf);
 	}
-	else if (parent_inode.size < (int)((1 + indexOfEntry) * sizeof(dir_ent_t))) {
-		parent_inode.size = (1 + indexOfEntry) * sizeof(dir_ent_t);
+	else if (pinum.size < (int)((1 + indexOfEntry) * sizeof(dir_ent_t))) {
+		pinum.size = (1 + indexOfEntry) * sizeof(dir_ent_t);
 		int const indexOfBlock = (parentInodeNumber / (UFS_BLOCK_SIZE / sizeof(inode_t)));
 		int const offsetOfBlock = (parentInodeNumber % (UFS_BLOCK_SIZE / sizeof(inode_t)));
 		disk->readBlock((super.inode_region_addr + indexOfBlock), byteBuf);
-		inodeBuf[offsetOfBlock].size = parent_inode.size;
+		inodeBuf[offsetOfBlock].size = pinum.size;
 		disk->writeBlock((super.inode_region_addr + indexOfBlock), byteBuf);
 	}
 
@@ -419,6 +413,228 @@ int LocalFileSystem::create(int parentInodeNumber, int type, string name) {
 	disk->commit();
   return inumNew;
 }
+
+
+// 创建一个test.txt
+// 1. 创建一个inode，存文件名称，文件类型，调用的是create函数，创建元数据
+// 2. 通过这个inode编号，找到inode，往inode指向的区域写数据，调用的是write函数
+
+// int LocalFileSystem::create(int parentInodeNumber, int type, string name) { 
+//   union {
+// 		unsigned char byteBuf[UFS_BLOCK_SIZE];
+// 		inode_t inodeBuf[(UFS_BLOCK_SIZE / sizeof(inode_t))];
+// 		dir_ent_t entryBuf[(UFS_BLOCK_SIZE / sizeof(dir_ent_t))];
+// 	};
+//   if(name.empty() || name.size()>=DIR_ENT_NAME_SIZE){
+//     return -EINVALIDNAME;
+//   }
+//   if (!name.compare(".") || !name.compare("..")) {
+// 		return -EINVALIDNAME;
+// 	}
+//   inode_t parent_inode;
+//   if(this->stat(parentInodeNumber,&parent_inode)==EINVALIDINODE){
+//     return -EINVALIDINODE;
+//   }
+
+//   if (parent_inode.type != UFS_DIRECTORY) {
+// 		return -EINVALIDINODE;
+// 	}
+
+//   // 首先查找有没有
+//   int inode_index = lookup(parentInodeNumber, name);
+//   if(inode_index>=0){
+//     inode_t inode;
+//     if (stat(inode_index, &inode)!=0){
+//       return -EINVALIDINODE;
+//     }
+//     if (inode.type != type){
+//       return -EINVALIDTYPE;
+//     }
+// 		return inode_index;
+//   }else if(-ENOTFOUND != inode_index){
+//     return inode_index;
+//   }
+  
+//   super_t super;
+//   readSuperBlock(&super);
+
+// 	disk->beginTransaction();
+
+// 	int indexOfData = 0;
+// 	int bQuit = 0;
+// 	if (UFS_DIRECTORY == type) {
+// 		for (int i = 0; 
+// 			(!bQuit && (i < super.data_bitmap_len)); 
+// 			i++) {
+// 			disk->readBlock((super.data_bitmap_addr + i), byteBuf);
+// 			for (int j = 0; 
+// 				(!bQuit && (j < UFS_BLOCK_SIZE)); 
+// 				j++) {
+// 				for (int k = 0; 
+// 					k < 8; 
+// 					k++, indexOfData++) {
+// 					unsigned int const msk = (1 << k);
+// 					if (!(byteBuf[j] & msk)) {
+// 						byteBuf[j] |= msk;
+// 						bQuit = 1;
+// 						disk->writeBlock((super.data_bitmap_addr + i), byteBuf);
+// 						break;
+// 					}
+// 				}
+// 			}
+// 		}
+
+// 		if (!bQuit || (super.num_data <= indexOfData)) {
+// 			disk->rollback();
+// 			return -ENOTENOUGHSPACE;
+// 		}
+// 	}
+
+// 	int inumNew = 0;
+// 	bQuit = 0;
+// 	for (int i = 0; 
+// 		(!bQuit && (i < super.inode_bitmap_len)); 
+// 		i++) {
+// 		disk->readBlock((super.inode_bitmap_addr + i), byteBuf);
+// 		for (int j = 0; 
+// 			(!bQuit && (j < UFS_BLOCK_SIZE)); 
+// 			j++) {
+// 			for (int k = 0; 
+// 				k < 8; 
+// 				k++, inumNew++) {
+// 				unsigned int const msk = (1 << k);
+// 				if (!(byteBuf[j] & msk)) {
+// 					byteBuf[j] |= msk;
+// 					bQuit = 1;
+// 					disk->writeBlock((super.inode_bitmap_addr + i), byteBuf);
+// 					break;
+// 				}
+// 			}
+// 		}
+// 	}
+
+// 	if (!bQuit || (super.num_inodes <= inumNew)) {
+// 		disk->rollback();
+// 		return -ENOTENOUGHSPACE;
+// 	}
+
+// 	if (UFS_DIRECTORY == type) {
+// 		memset(byteBuf, 0, UFS_BLOCK_SIZE);
+// 		entryBuf[0].name[0] = '.';
+// 		entryBuf[0].name[1] = 0;
+// 		entryBuf[0].inum = inumNew;
+// 		entryBuf[1].name[0] = '.';
+// 		entryBuf[1].name[1] = '.';
+// 		entryBuf[1].name[2] = 0;
+// 		entryBuf[1].inum = parentInodeNumber;
+// 		for (int i = 2; 
+// 			(i < (int)(sizeof(entryBuf)/sizeof(dir_ent_t))); 
+// 			i++) {
+// 			entryBuf[i].inum = -1;
+// 		}
+// 		disk->writeBlock((super.data_region_addr + indexOfData), byteBuf);
+// 	}
+
+// 	int cntOfBlock = (parent_inode.size + (UFS_BLOCK_SIZE - 1)) / UFS_BLOCK_SIZE;
+// 	int indexOfEntry = 0;
+// 	bQuit = 0;
+
+// 	for (int i = 0; 
+// 		(!bQuit && (i < cntOfBlock)); 
+// 		i++) {
+// 		disk->readBlock((parent_inode.direct[i]), byteBuf);
+// 		for (int j = 0; 
+// 			(j < (int)(sizeof(entryBuf)/sizeof(dir_ent_t))); 
+// 			j++, indexOfEntry++) {
+// 			if (parent_inode.size <= (int)(sizeof(dir_ent_t) * indexOfEntry)) {
+// 				entryBuf[j].inum = -1;
+// 			}
+// 			if (-1 == entryBuf[j].inum) {
+// 				bQuit = 1;
+// 				strcpy(entryBuf[j].name, name.c_str());
+// 				entryBuf[j].inum = inumNew;
+// 				disk->writeBlock((parent_inode.direct[i]), byteBuf);
+// 				break;
+// 			}
+// 		}
+// 	}
+
+// 	if (!bQuit) {
+// 		if (DIRECT_PTRS <= cntOfBlock) {
+// 			disk->rollback();
+// 			return -ENOTENOUGHSPACE;
+// 		}
+
+// 		int indexDataNew = 0;
+// 		for (int i = 0; 
+// 			(!bQuit && (i < super.data_bitmap_len)); 
+// 			i++) {
+// 			disk->readBlock((super.data_bitmap_addr + i), byteBuf);
+// 			for (int j = 0; 
+// 				(!bQuit && (j < UFS_BLOCK_SIZE)); 
+// 				j++) {
+// 				for (int k = 0; 
+// 					k < 8; 
+// 					k++, indexDataNew++) {
+// 					unsigned int const msk = (1 << k);
+// 					if (!(byteBuf[j] & msk)) {
+// 						byteBuf[j] |= msk;
+// 						bQuit = 1;
+// 						disk->writeBlock((super.data_bitmap_addr + i), byteBuf);
+// 						break;
+// 					}
+// 				}
+// 			}
+// 		}
+
+// 		if (!bQuit || (super.num_data <= indexDataNew)) {
+// 			disk->rollback();
+// 			return -ENOTENOUGHSPACE;
+// 		}
+
+// 		memset(byteBuf, 0, UFS_BLOCK_SIZE);
+// 		strcpy(entryBuf[0].name, name.c_str());
+// 		entryBuf[0].inum = inumNew;
+// 		for (int i = 1; 
+// 			i < (int)(sizeof(entryBuf) / sizeof(dir_ent_t)); 
+// 			i++) {
+// 			entryBuf[i].inum = -1;
+// 		}
+// 		disk->writeBlock((super.data_region_addr + indexDataNew), byteBuf);
+// 		parent_inode.size = (1 + indexOfEntry) * sizeof(dir_ent_t);
+// 		int indexOfBlock = (parentInodeNumber / (UFS_BLOCK_SIZE / sizeof(inode_t)));
+// 		int offsetOfBlock = (parentInodeNumber % (UFS_BLOCK_SIZE / sizeof(inode_t)));
+// 		disk->readBlock((super.inode_region_addr + indexOfBlock), byteBuf);
+// 		inodeBuf[offsetOfBlock].size = parent_inode.size;
+// 		inodeBuf[offsetOfBlock].direct[cntOfBlock++] = (super.data_region_addr + indexDataNew);
+// 		disk->writeBlock((super.inode_region_addr + indexOfBlock), byteBuf);
+// 	}
+// 	else if (parent_inode.size < (int)((1 + indexOfEntry) * sizeof(dir_ent_t))) {
+// 		parent_inode.size = (1 + indexOfEntry) * sizeof(dir_ent_t);
+// 		int const indexOfBlock = (parentInodeNumber / (UFS_BLOCK_SIZE / sizeof(inode_t)));
+// 		int const offsetOfBlock = (parentInodeNumber % (UFS_BLOCK_SIZE / sizeof(inode_t)));
+// 		disk->readBlock((super.inode_region_addr + indexOfBlock), byteBuf);
+// 		inodeBuf[offsetOfBlock].size = parent_inode.size;
+// 		disk->writeBlock((super.inode_region_addr + indexOfBlock), byteBuf);
+// 	}
+
+// 	int const indexOfBlock = (inumNew / (UFS_BLOCK_SIZE / sizeof(inode_t)));
+// 	int const offsetOfBlock = (inumNew % (UFS_BLOCK_SIZE / sizeof(inode_t)));
+// 	disk->readBlock((super.inode_region_addr + indexOfBlock), byteBuf);
+// 	inodeBuf[offsetOfBlock].type = type;
+
+// 	if (UFS_DIRECTORY == type) {
+// 		inodeBuf[offsetOfBlock].size = (sizeof(dir_ent_t) << 1);
+// 		inodeBuf[offsetOfBlock].direct[0] = (super.data_region_addr + indexOfData);
+// 	}
+// 	else {
+// 		inodeBuf[offsetOfBlock].size = 0;
+// 	}
+// 	disk->writeBlock((super.inode_region_addr + indexOfBlock), byteBuf);
+
+// 	disk->commit();
+//   return inumNew;
+// }
 
 int getAndSetFreeInodeNumIndex(super_t *super, unsigned char *inodeBitMap){
   for(int i=0;i<super->inode_bitmap_len * UFS_BLOCK_SIZE;i++){
