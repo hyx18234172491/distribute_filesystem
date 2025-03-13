@@ -27,9 +27,19 @@ int main(int argc, char *argv[]) {
   int dstInode = stoi(argv[3]);
 
   inode_t inode;
-  // fileSystem->lookup(0,srcFile);
-  // fileSystem->read();
-  // fileSystem->write(dstInode,,);
+  int inode_num = fileSystem->lookup(0,srcFile);  // 假设递归lookup
+  if(inode_num < 0){
+    cout << "Could not write to dst_file"<<endl;
+    return 1;
+  }
+  fileSystem->stat(inode_num,&inode);
+  unsigned char *buffer = new unsigned char[inode.size+1];
+
+  fileSystem->read(inode_num,buffer,inode.size);
+  if(fileSystem->write(dstInode,buffer,inode.size)!=-1){
+    cout << "Could not write to dst_file"<<endl;
+    return 1;
+  }
   
   return 0;
 }
