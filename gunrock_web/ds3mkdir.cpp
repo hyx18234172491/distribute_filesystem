@@ -20,7 +20,10 @@ int main(int argc, char *argv[]) {
   int parentInode = stoi(argv[2]);
   string directory = string(argv[3]);
   if(fileSystem->create(parentInode,UFS_DIRECTORY,directory)!=0){
-    cout << "Error creating directory"<<endl;
+    cerr << "Error creating directory"<<endl;
+    delete disk;
+    delete fileSystem;
+    return 1;
   }
 
   delete disk;

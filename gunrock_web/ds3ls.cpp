@@ -18,6 +18,8 @@ bool compareByName(const dir_ent_t& a, const dir_ent_t& b) {
 }
 */
 
+int flag = 0;
+
 struct DirEntLess {
 	inline bool operator()(const dir_ent_t& a, const dir_ent_t& b) const {
 		return std::string(a.name).compare(b.name) < 0;
@@ -47,6 +49,7 @@ void lsDirectory(int inodeNumber, const string path, LocalFileSystem* fileSystem
 	inode_t inode;
 	if (fileSystem->stat(inodeNumber, &inode)){
     // cout << "1" <<endl;
+    flag = 1;
     return;
   }
 
@@ -77,28 +80,32 @@ void lsDirectory(int inodeNumber, const string path, LocalFileSystem* fileSystem
         cout << entry.inum << "\t" << entry.name << endl;
       }
     }
-    cout << endl;
     return ;
   }
-
-
 	
-	//DFS for sub-directory
-	for (itr = vecEntries.begin(); 
-		itr != vecEntries.end(); 
-		++itr) {
-		const dir_ent_t& entry = *itr;
-		if (isValidName(entry.inum, entry.name) && strcmp(entry.name, ".") && strcmp(entry.name, "..") && strcmp(entry.name,result.first.c_str())==0) {
-			inode_t subInode;
-			if (fileSystem->stat(entry.inum, &subInode)){
-        continue;
+ if(result.first!=""){
+   int find = 0;
+    //DFS for sub-directory
+    for (itr = vecEntries.begin(); 
+      itr != vecEntries.end(); 
+      ++itr) {
+      const dir_ent_t& entry = *itr;
+      if (isValidName(entry.inum, entry.name) && strcmp(entry.name, ".") && strcmp(entry.name, "..") && strcmp(entry.name,result.first.c_str())==0) {
+        inode_t subInode;
+        if (fileSystem->stat(entry.inum, &subInode)){
+          continue;
+        }
+        if (subInode.type == UFS_DIRECTORY) {
+          find = 1;
+          string childPath = result.second;
+          lsDirectory(entry.inum, childPath, fileSystem);
+        }
       }
-			if (subInode.type == UFS_DIRECTORY) {
-				string childPath = result.second;
-				lsDirectory(entry.inum, childPath, fileSystem);
-			}
-		}
-	}
+    }
+    if(find==0){
+      flag = 1;
+    }
+ }
 }
 
 
@@ -117,6 +124,11 @@ int main(int argc, char *argv[]) {
 
   delete disk;
   delete fileSystem;
+
+  if(flag==1){
+    cerr << "Directory not found" << endl;
+    return 1;
+  }
   
   return 0;
 }

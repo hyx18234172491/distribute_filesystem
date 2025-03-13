@@ -30,7 +30,7 @@ int main(int argc, char *argv[]) {
 
   std::ifstream file(srcFile);
   if (!file) {
-      std::cerr << "Error: Cannot open file " << srcFile << std::endl;
+      cerr << "Could not write to dst_file"<<endl;
       return 1;
   }
 
@@ -39,9 +39,9 @@ int main(int argc, char *argv[]) {
   std::string fileContent = buffer.str();
 
   if(fileSystem->write(dstInode,fileContent.c_str(),fileContent.size())<0){
-    cout << "Could not write to dst_file"<<endl;
-      delete disk;
-      delete fileSystem;
+    cerr << "Could not write to dst_file"<<endl;
+    delete disk;
+    delete fileSystem;
     return 1;
   }
   delete disk;

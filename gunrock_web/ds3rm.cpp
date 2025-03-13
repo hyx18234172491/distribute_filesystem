@@ -22,7 +22,10 @@ int main(int argc, char *argv[]) {
   string entryName = string(argv[3]);
 
   if(fileSystem->unlink(parentInode,entryName)!=0){
-    cout << "Error removing entry"<<endl;
+    cerr << "Error removing entry"<<endl;
+    delete disk;
+    delete fileSystem;
+    return 1;
   }
   delete disk;
   delete fileSystem;
