@@ -107,15 +107,9 @@ int LocalFileSystem::lookup(int parentInodeNumber, string name) {
       // 读出了整个entrieList，
       for(int j = 0; j < entries_num;j++){
         if(entrieList[i].inum!=-1){
-          if(strcmp(entrieList[i].name,name.c_str())==0){
+          if(strcmp(entrieList[i].name,name.c_str())==0 && entrieList[i].inum!=-1){
             return entrieList[i].inum;
           }
-          // inode_t entrieInode;
-          // if(this->stat(entrieList[i].inum,&entrieInode)==0){ // inum能找到inode
-          //   if(entrieInode.type==UFS_DIRECTORY){
-          //       lookup(entrieList[i].inum,name);
-          //   }
-          // }
         }
       }
     }
