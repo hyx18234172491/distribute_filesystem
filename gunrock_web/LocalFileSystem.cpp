@@ -96,8 +96,7 @@ int LocalFileSystem::lookup(int parentInodeNumber, string name) {
   int entries_num = UFS_BLOCK_SIZE / sizeof(dir_ent_t);
   // 找这个里面的内容就可用了inodes[parentInodeNumber]
   if(inode.type==UFS_DIRECTORY){
-    // 通过direct[i]找到对应的数据域
-    for (int i = 0; i < DIRECT_PTRS; i++)
+    for (int i = 0; i < DIRECT_PTRS; i++) // 30个指针
     {
       unsigned int data_block_index = inode.direct[i];
       if (data_block_index == 0) {
@@ -106,9 +105,17 @@ int LocalFileSystem::lookup(int parentInodeNumber, string name) {
       dir_ent_t entrieList[entries_num];
       disk->readBlock(data_block_index, entrieList);
       // 读出了整个entrieList，
-      for(int j = 0; j<entries_num;j++){
-        if(entrieList[i].inum!=-1 && (entrieList[i].name,name.c_str())==0){
-          return entrieList[i].inum;
+      for(int j = 0; j < entries_num;j++){
+        if(entrieList[i].inum!=-1){
+          if(entrieList[i].name,name.c_str()==0){
+            return entrieList[i].inum;
+          }
+          // inode_t entrieInode;
+          // if(this->stat(entrieList[i].inum,&entrieInode)==0){ // inum能找到inode
+          //   if(entrieInode.type==UFS_DIRECTORY){
+          //       lookup(entrieList[i].inum,name);
+          //   }
+          // }
         }
       }
     }

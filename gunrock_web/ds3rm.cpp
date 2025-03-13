@@ -24,6 +24,5 @@ int main(int argc, char *argv[]) {
   if(fileSystem->unlink(parentInode,entryName)!=0){
     cout << "Error removing entry"<<endl;
   }
-
   return 0;
 }
