@@ -10,6 +10,8 @@
 #include "LocalFileSystem.h"
 #include "Disk.h"
 #include "ufs.h"
+#include <fstream>
+#include <sstream>
 
 using namespace std;
 
@@ -26,20 +28,23 @@ int main(int argc, char *argv[]) {
   string srcFile = string(argv[2]);
   int dstInode = stoi(argv[3]);
 
-  inode_t inode;
-  int inode_num = fileSystem->lookup(0,srcFile);  // 假设递归lookup
-  if(inode_num < 0){
-    cout << "Could not write to dst_file"<<endl;
-    return 1;
+  std::ifstream file(srcFile);
+  if (!file) {
+      std::cerr << "Error: Cannot open file " << srcFile << std::endl;
+      return 1;
   }
-  fileSystem->stat(inode_num,&inode);
-  unsigned char *buffer = new unsigned char[inode.size+1];
 
-  fileSystem->read(inode_num,buffer,inode.size);
-  if(fileSystem->write(dstInode,buffer,inode.size)!=-1){
+  std::stringstream buffer;
+  buffer << file.rdbuf();
+  std::string fileContent = buffer.str();
+
+  if(fileSystem->write(dstInode,fileContent.c_str(),fileContent.size())<0){
     cout << "Could not write to dst_file"<<endl;
+      delete disk;
+      delete fileSystem;
     return 1;
   }
-  
+  delete disk;
+  delete fileSystem;
   return 0;
 }
