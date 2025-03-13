@@ -28,49 +28,73 @@ static bool isValidName(int inum, const char* name) {
 	return ((inum >= 0) && name && name[0]);
 }
 
-void lsDirectory(int inodeNumber, const string& path, LocalFileSystem* fileSystem) {
+std::pair<std::string, std::string> splitFirstSegment(const std::string& path) {
+    if (path.empty() || path[0] != '/') return {"", ""}; // 确保是绝对路径
+
+    size_t firstSlash = 1; // 跳过第一个斜杠 '/'
+    size_t secondSlash = path.find('/', firstSlash);
+
+    if (secondSlash == std::string::npos) {
+        // 只有一个目录，例如 "/a"
+        return {path.substr(1), ""};
+    } else {
+        // 例如 "/a/b/c"，得到 "a" 和 "/b/c"
+        return {path.substr(1, secondSlash - 1), path.substr(secondSlash)};
+    }
+}
+
+void lsDirectory(int inodeNumber, const string path, LocalFileSystem* fileSystem) {
 	inode_t inode;
-	if (fileSystem->stat(inodeNumber, &inode))
-		return;
+	if (fileSystem->stat(inodeNumber, &inode)){
+    // cout << "1" <<endl;
+    return;
+  }
 
-	string path2 = path;
-	if (path2 == "/") {
-		path2.clear();
-	}
+  pair<std::string, std::string> result = splitFirstSegment(path);
+  int const numOfEntries = (inode.size) / sizeof(dir_ent_t);
+  if (numOfEntries <= 0){
+    // cout << "2" <<endl;
+    return;
+  }
+  std::vector<dir_ent_t> vecEntries(numOfEntries);
+  if (fileSystem->read(inodeNumber, &vecEntries[0], vecEntries.size()*sizeof(dir_ent_t)) < 0){
+    // cout << "3"<<endl;
+    return;
+  }
 
-	// cout << "Directory " << (path2.empty() ? "/" : path2 + "/") << endl;
+  std::sort(vecEntries.begin(), vecEntries.end(), DirEntLess());
+  std::vector<dir_ent_t>::iterator itr;
+  // if(result.second==""&&result.first.find(".")){
+  //   cout << inodeNumber <<"\t" << result.first <<endl;
+  //   return ;
+  // }
 
-	int const numOfEntries = (inode.size) / sizeof(dir_ent_t);
-	if (numOfEntries <= 0)
-		return;
+  if(result.first=="" && result.second==""){
+    // cout << "4"<<endl;
+    for (itr = vecEntries.begin(); itr != vecEntries.end(); ++itr) {
+      const dir_ent_t& entry = *itr;
+      if (isValidName(entry.inum, entry.name)) {
+        cout << entry.inum << "\t" << entry.name << endl;
+      }
+    }
+    cout << endl;
+    return ;
+  }
 
-	std::vector<dir_ent_t> vecEntries(numOfEntries);
 
-	if (fileSystem->read(inodeNumber, &vecEntries[0], vecEntries.size()*sizeof(dir_ent_t)) < 0)
-		return;
-
-	std::sort(vecEntries.begin(), vecEntries.end(), DirEntLess());
-
-	std::vector<dir_ent_t>::iterator itr;
-	for (itr = vecEntries.begin(); itr != vecEntries.end(); ++itr) {
-		const dir_ent_t& entry = *itr;
-		if (isValidName(entry.inum, entry.name)) {
-			cout << entry.inum << "\t" << entry.name << endl;
-		}
-	}
-	cout << endl;
-
+	
 	//DFS for sub-directory
 	for (itr = vecEntries.begin(); 
 		itr != vecEntries.end(); 
 		++itr) {
 		const dir_ent_t& entry = *itr;
-		if (isValidName(entry.inum, entry.name) && strcmp(entry.name, ".") && strcmp(entry.name, "..")) {
+		if (isValidName(entry.inum, entry.name) && strcmp(entry.name, ".") && strcmp(entry.name, "..") && strcmp(entry.name,result.first.c_str())==0) {
 			inode_t subInode;
-			if (fileSystem->stat(entry.inum, &subInode))
-				continue;
+			if (fileSystem->stat(entry.inum, &subInode)){
+        continue;
+      }
 			if (subInode.type == UFS_DIRECTORY) {
-				string childPath = path2 + "/" + entry.name;
+				string childPath = result.second;
 				lsDirectory(entry.inum, childPath, fileSystem);
 			}
 		}
@@ -90,6 +114,9 @@ int main(int argc, char *argv[]) {
   LocalFileSystem *fileSystem = new LocalFileSystem(disk);
   string directory = string(argv[2]);
   lsDirectory(0, directory, fileSystem);
+
+  delete disk;
+  delete fileSystem;
   
   return 0;
 }

@@ -107,7 +107,7 @@ int LocalFileSystem::lookup(int parentInodeNumber, string name) {
       // 读出了整个entrieList，
       for(int j = 0; j < entries_num;j++){
         if(entrieList[i].inum!=-1){
-          if(entrieList[i].name,name.c_str()==0){
+          if(strcmp(entrieList[i].name,name.c_str())==0){
             return entrieList[i].inum;
           }
           // inode_t entrieInode;
@@ -166,19 +166,23 @@ int LocalFileSystem::stat(int inodeNumber, inode_t *inode) {
 
 int LocalFileSystem::read(int inodeNumber, void *buffer, int size) {
   if (!buffer || (size <= 0)) {
-		return EINVALIDSIZE;
+		return -EINVALIDSIZE;
 	}
   inode_t inode;
-  if(this->stat(inodeNumber,&inode)==EINVALIDINODE){
-    return EINVALIDINODE;
+  if(this->stat(inodeNumber,&inode)==-EINVALIDINODE){
+    return -EINVALIDINODE;
   }
+
+  // if(inode.type==UFS_DIRECTORY){
+  //   return -EINVALIDINODE;
+  // }
   // 读数据，我们只能读一个block
   // 先把数据读到block，再从block（4K）里边复制到buffer（2K)
   size = min(size,inode.size);
 
   int remaining  = size;
   int bytesRead  = 0;
-  char temp_buffer[UFS_BLOCK_SIZE];
+  unsigned char temp_buffer[UFS_BLOCK_SIZE];
   for (int i = 0; i < DIRECT_PTRS; i++) // 遍历inode指向的所有块
   {
     unsigned int data_block_index = inode.direct[i];
@@ -189,13 +193,13 @@ int LocalFileSystem::read(int inodeNumber, void *buffer, int size) {
 
     this->disk->readBlock(data_block_index,temp_buffer);
 
-    if(remaining-UFS_BLOCK_SIZE>=0){
-      memcpy(buffer + bytesRead,temp_buffer,UFS_BLOCK_SIZE);
-      bytesRead += UFS_BLOCK_SIZE;
-    }else{
-      memcpy(buffer + bytesRead,temp_buffer,remaining);
-      bytesRead+=remaining ;
-      break;
+    int copy_size = std::min(UFS_BLOCK_SIZE, remaining); // 确保不会溢出 buffer
+    memcpy(static_cast<unsigned char*>(buffer) + bytesRead, temp_buffer, copy_size);
+    bytesRead += copy_size;
+    remaining -= copy_size;
+
+    if (remaining <= 0) {
+        break; // 读取足够数据后停止
     }
   }
   return bytesRead;
@@ -550,23 +554,23 @@ int LocalFileSystem::unlink(int parentInodeNumber, string name) {
   }
 
   
-  // TODO:unlink是否需要更新bitmap
-  if(name_inode.type==UFS_REGULAR_FILE){
-    // 如何从entrieList中删除
-    entrieList[i].inum=-1;
-    entrieList[i].name[0]='\0';
-    disk->writeBlock(data_block_index, entrieList);
-  }else{
-    // 目录
-    // 还需要判断目录是否为空
-    if(name_inode.size>0){
-      return EDIRNOTEMPTY;
-    }else{
-        entrieList[i].inum=-1;
-        entrieList[i].name[0]='\0';
-        disk->writeBlock(data_block_index, entrieList);
-    }
-  }
+  // // TODO:unlink是否需要更新bitmap
+  // if(name_inode.type==UFS_REGULAR_FILE){
+  //   // 如何从entrieList中删除
+  //   entrieList[i].inum=-1;
+  //   entrieList[i].name[0]='\0';
+  //   disk->writeBlock(data_block_index, entrieList);
+  // }else{
+  //   // 目录
+  //   // 还需要判断目录是否为空
+  //   if(name_inode.size>0){
+  //     return EDIRNOTEMPTY;
+  //   }else{
+  //       entrieList[i].inum=-1;
+  //       entrieList[i].name[0]='\0';
+  //       disk->writeBlock(data_block_index, entrieList);
+  //   }
+  // }
   return 0;
 }
 

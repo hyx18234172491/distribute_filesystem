@@ -35,14 +35,14 @@ int main(int argc, char *argv[]) {
   fileSystem->readInodeBitmap(&super,bmp);
 
   cout <<endl << "Inode bitmap" << endl;
-  for (unsigned int i = 0;i < (unsigned int)(super.inode_bitmap_len * UFS_BLOCK_SIZE);i++) {
-      cout << (unsigned int)bmp[i] << " ";
+  for (unsigned int i = 0;i < (unsigned int)(super.num_inodes / 8);i++) {
+      cout << (unsigned) bmp[i] << " ";
   }
   cout << endl << endl;
 
   fileSystem->readDataBitmap(&super,bmp);
   cout << "Data bitmap" << endl;
-  for (unsigned int i = 0;i < (unsigned int)(super.data_bitmap_len * UFS_BLOCK_SIZE); i++) {
+  for (unsigned int i = 0;i < (unsigned int)(super.num_data / 8); i++) {
       cout << (unsigned int)bmp[i] << " ";
   }
   cout << endl;

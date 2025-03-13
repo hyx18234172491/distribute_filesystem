@@ -22,7 +22,15 @@ int main(int argc, char *argv[]) {
 
   inode_t inode;
   if (fileSystem->stat(inodeNumber, &inode) != 0) {
-        cerr << "Error: inode invalid: " << inodeNumber << endl;
+        cerr << "Error reading file"<<endl;
+        delete disk;
+        delete fileSystem;
+        return 1;
+  }
+  if(inode.type==UFS_DIRECTORY){
+    cerr << "Error reading file"<<endl;
+        delete disk;
+        delete fileSystem;
         return 1;
   }
 
@@ -35,19 +43,23 @@ int main(int argc, char *argv[]) {
 
   char *szBuf = (char*)std::malloc(inode.size + 1);
   szBuf[inode.size] = '\0';
+  
 
 	int ret = fileSystem->read(inodeNumber, szBuf, inode.size);
+  // cout << ret <<endl;
   if (ret < 0) {
-        cerr << "Error: read file data." << endl;
+        cerr << "Error reading file" << endl;
         free(szBuf);
+        delete disk;
+        delete fileSystem;
         return 1;
   }
 	szBuf[ret] = '\0';
 
 	cout << "File data" << endl;
   cout << szBuf;
-  free(szBuf);
 
+  free(szBuf);
   delete disk;
   delete fileSystem;
 
