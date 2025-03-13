@@ -15,14 +15,13 @@ int main(int argc, char *argv[]) {
     cerr << "    $ " << argv[0] << " a.img 0 a" << endl;
     return 1;
   }
-
-  // Parse command line arguments
-  /*
   Disk *disk = new Disk(argv[1], UFS_BLOCK_SIZE);
   LocalFileSystem *fileSystem = new LocalFileSystem(disk);
   int parentInode = stoi(argv[2]);
   string directory = string(argv[3]);
-  */
+  if(fileSystem->create(parentInode,UFS_DIRECTORY,directory)!=0){
+    cout << "Error creating directory"<<endl;
+  }
   
   return 0;
 }

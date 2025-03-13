@@ -21,13 +21,15 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // Parse command line arguments
-  /*
   Disk *disk = new Disk(argv[1], UFS_BLOCK_SIZE);
   LocalFileSystem *fileSystem = new LocalFileSystem(disk);
   string srcFile = string(argv[2]);
   int dstInode = stoi(argv[3]);
-  */
+
+  inode_t inode;
+  // fileSystem->lookup(0,srcFile);
+  // fileSystem->read();
+  // fileSystem->write(dstInode,,);
   
   return 0;
 }
