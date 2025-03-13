@@ -22,6 +22,9 @@ int main(int argc, char *argv[]) {
   if(fileSystem->create(parentInode,UFS_DIRECTORY,directory)!=0){
     cout << "Error creating directory"<<endl;
   }
+
+  delete disk;
+  delete fileSystem;
   
   return 0;
 }

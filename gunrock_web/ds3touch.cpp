@@ -23,6 +23,7 @@ int main(int argc, char *argv[]) {
   if(fileSystem->create(parentInode,UFS_REGULAR_FILE,fileName)!=0){
     cout << "Error creating file"<<endl;
   }
-  
+  delete disk;
+  delete fileSystem;
   return 0;
 }
